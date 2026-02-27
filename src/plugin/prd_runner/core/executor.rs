@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::config::ExecutionConfig;
+use crate::plugin::prd_runner::config::ExecutionConfig;
+use crate::runtime::signal;
 use anyhow::{anyhow, bail, Context, Result};
 
 #[derive(Debug, Clone)]
@@ -38,8 +39,9 @@ impl CommandResult {
             text = format!("exit_code={}", self.exit_code);
         }
 
-        if text.len() > max_chars {
-            format!("{}...", &text[..max_chars])
+        if text.chars().count() > max_chars {
+            let truncated = text.chars().take(max_chars).collect::<String>();
+            format!("{}...", truncated)
         } else {
             text
         }
@@ -151,6 +153,12 @@ fn wait_with_timeout(child: &mut std::process::Child, timeout: Duration) -> Resu
     let started = Instant::now();
 
     loop {
+        if signal::interrupted() {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("execution interrupted by Ctrl+C");
+        }
+
         if child
             .try_wait()
             .context("failed while waiting for command")?
@@ -208,7 +216,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::CommandExecutor;
-    use crate::config::ExecutionConfig;
+    use crate::plugin::prd_runner::config::ExecutionConfig;
 
     #[test]
     fn rejects_empty_command() {
@@ -239,6 +247,22 @@ mod tests {
             .expect("command should execute successfully");
         assert!(result.success());
         assert!(result.stdout.contains("hello"));
+    }
+
+    #[test]
+    fn output_summary_truncates_utf8_safely() {
+        let result = super::CommandResult {
+            command: "echo".to_string(),
+            exit_code: 0,
+            stdout: "你好世界abc".to_string(),
+            stderr: String::new(),
+            duration_ms: 1,
+            timed_out: false,
+            attempt: 1,
+        };
+
+        let summary = result.output_summary(3);
+        assert_eq!(summary, "你好世...");
     }
 
     #[test]

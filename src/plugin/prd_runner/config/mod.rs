@@ -140,11 +140,11 @@ impl Default for ProviderConfig {
 
 mod defaults {
     pub fn max_runtime() -> String {
-        "4h".to_string()
+        "10m".to_string()
     }
 
     pub fn command_timeout() -> String {
-        "60s".to_string()
+        "10m".to_string()
     }
 
     pub fn max_retry() -> u32 {
@@ -180,6 +180,6 @@ mod defaults {
     }
 
     pub fn provider_response_timeout() -> String {
-        "20m".to_string()
+        "10m".to_string()
     }
 }

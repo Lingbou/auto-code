@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use walkdir::WalkDir;
 
-use crate::logger::report::IterationReport;
-use crate::loop_engine::state::EngineState;
+use crate::plugin::prd_runner::logger::report::IterationReport;
+use crate::plugin::prd_runner::loop_engine::state::EngineState;
 
 #[derive(Debug, Clone)]
 pub struct CheckpointManager {
@@ -32,10 +32,7 @@ impl CheckpointManager {
         report: &IterationReport,
         workdir: &Path,
     ) -> Result<PathBuf> {
-        let mut checkpoint_dir = self.root.join(format!("checkpoint_{:03}", iteration));
-        if checkpoint_dir.exists() {
-            checkpoint_dir = self.root.join(format!("checkpoint_{:03}_dup", iteration));
-        }
+        let checkpoint_dir = self.next_checkpoint_dir(iteration);
 
         std::fs::create_dir_all(&checkpoint_dir).with_context(|| {
             format!(
@@ -74,6 +71,28 @@ impl CheckpointManager {
         Ok(checkpoint_dir)
     }
 
+    fn next_checkpoint_dir(&self, iteration: u32) -> PathBuf {
+        let base = format!("checkpoint_{:03}", iteration);
+        let primary = self.root.join(&base);
+        if !primary.exists() {
+            return primary;
+        }
+
+        let mut suffix = 1usize;
+        loop {
+            let name = if suffix == 1 {
+                format!("{}_dup", base)
+            } else {
+                format!("{}_dup{}", base, suffix)
+            };
+            let candidate = self.root.join(name);
+            if !candidate.exists() {
+                return candidate;
+            }
+            suffix = suffix.saturating_add(1);
+        }
+    }
+
     fn prune_old_checkpoints(&self) -> Result<()> {
         let mut entries = std::fs::read_dir(&self.root)
             .with_context(|| format!("failed to read checkpoint root {}", self.root.display()))?
@@ -85,7 +104,7 @@ impl CheckpointManager {
             return Ok(());
         }
 
-        entries.sort_by_key(|entry| entry.file_name());
+        entries.sort_by_key(|entry| checkpoint_order_key(&entry.path()));
 
         let remove_count = entries.len().saturating_sub(self.max_keep);
         for entry in entries.into_iter().take(remove_count) {
@@ -96,6 +115,28 @@ impl CheckpointManager {
 
         Ok(())
     }
+}
+
+fn checkpoint_order_key(path: &Path) -> (u32, String) {
+    let name = path
+        .file_name()
+        .map(|v| v.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let num = parse_checkpoint_index(&name).unwrap_or(0);
+    (num, name)
+}
+
+fn parse_checkpoint_index(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("checkpoint_")?;
+    let digits = rest
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+
+    digits.parse::<u32>().ok()
 }
 
 fn copy_workspace_snapshot(src: &Path, dst: &Path) -> Result<()> {
@@ -165,8 +206,8 @@ mod tests {
     use chrono::Utc;
     use tempfile::TempDir;
 
-    use crate::logger::report::{IterationReport, ReqReport};
-    use crate::loop_engine::state::EngineState;
+    use crate::plugin::prd_runner::logger::report::{IterationReport, ReqReport};
+    use crate::plugin::prd_runner::loop_engine::state::EngineState;
 
     use super::CheckpointManager;
 
@@ -215,6 +256,42 @@ mod tests {
         assert!(path.join("prd.md").exists());
         assert!(path.join("code_snapshot/README.md").exists());
         assert!(!path.join("code_snapshot/.autocode").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn allocates_unique_dir_when_same_iteration_is_saved_multiple_times() -> Result<()> {
+        let workspace = TempDir::new()?;
+        let checkpoints = TempDir::new()?;
+        let prd_path = workspace.path().join("prd.md");
+        std::fs::write(&prd_path, "# PRD")?;
+        std::fs::write(workspace.path().join("README.md"), "demo")?;
+
+        let state = EngineState {
+            iteration: 1,
+            req_status: BTreeMap::new(),
+        };
+        let report = IterationReport {
+            iteration: 1,
+            timestamp: Utc::now(),
+            duration_seconds: 1,
+            req_status: BTreeMap::new(),
+            overall_progress: 0.0,
+            has_progress: false,
+            next_actions: vec![],
+        };
+
+        let manager = CheckpointManager::new(checkpoints.path(), 10)?;
+        let first = manager.save(1, &prd_path, &state, &report, workspace.path())?;
+        let second = manager.save(1, &prd_path, &state, &report, workspace.path())?;
+        let third = manager.save(1, &prd_path, &state, &report, workspace.path())?;
+
+        assert!(first.ends_with("checkpoint_001"));
+        assert!(second.ends_with("checkpoint_001_dup"));
+        assert!(third.ends_with("checkpoint_001_dup2"));
+        assert!(first.join("state.json").exists());
+        assert!(second.join("state.json").exists());
+        assert!(third.join("state.json").exists());
         Ok(())
     }
 }

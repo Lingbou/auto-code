@@ -1,7 +1,7 @@
-use crate::config::prd::Requirement;
-use crate::core::executor::CommandExecutor;
-use crate::loop_engine::pass_condition::evaluate_pass_condition;
-use crate::loop_engine::state::{ReqEvidence, ReqStatus};
+use crate::plugin::prd_runner::config::prd::Requirement;
+use crate::plugin::prd_runner::core::executor::CommandExecutor;
+use crate::plugin::prd_runner::loop_engine::pass_condition::evaluate_pass_condition;
+use crate::plugin::prd_runner::loop_engine::state::{ReqEvidence, ReqStatus};
 
 #[derive(Debug, Clone)]
 pub struct EvalResult {
@@ -78,10 +78,10 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{evaluate_requirement, evaluate_requirement_dry_run};
-    use crate::config::prd::Requirement;
-    use crate::config::ExecutionConfig;
-    use crate::core::executor::CommandExecutor;
-    use crate::loop_engine::state::ReqStatus;
+    use crate::plugin::prd_runner::config::prd::Requirement;
+    use crate::plugin::prd_runner::config::ExecutionConfig;
+    use crate::plugin::prd_runner::core::executor::CommandExecutor;
+    use crate::plugin::prd_runner::loop_engine::state::ReqStatus;
 
     fn requirement(command: &str, pass_condition: &str) -> Requirement {
         Requirement {

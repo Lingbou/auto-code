@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use regex::Regex;
 
-use crate::config::prd::{PrdDocument, Requirement};
-use crate::core::provider::Provider;
+use crate::plugin::prd_runner::config::prd::{PrdDocument, Requirement};
+use crate::plugin::prd_runner::core::provider::Provider;
 
 #[derive(Debug, Clone)]
 pub struct AiInstruction {

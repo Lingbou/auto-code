@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use regex::Regex;
 
-use crate::core::executor::CommandResult;
+use crate::plugin::prd_runner::core::executor::CommandResult;
 
 #[derive(Debug, Clone)]
 pub struct ConditionEvaluation {
@@ -139,7 +139,7 @@ fn extract_coverage_value(output: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::evaluate_pass_condition;
-    use crate::core::executor::CommandResult;
+    use crate::plugin::prd_runner::core::executor::CommandResult;
 
     fn sample_result(stdout: &str, stderr: &str, exit_code: i32) -> CommandResult {
         CommandResult {

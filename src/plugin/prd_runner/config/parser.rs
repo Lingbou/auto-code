@@ -207,15 +207,21 @@ fn parse_two_column_row(line: &str) -> Option<(String, String)> {
 }
 
 fn parse_table_row(line: &str) -> Option<Vec<String>> {
-    if !line.starts_with('|') || !line.ends_with('|') {
+    let trimmed = line.trim();
+    if !trimmed.contains('|') {
         return None;
     }
 
-    let cells = line
-        .trim_matches('|')
+    let cells = trimmed
+        .trim_start_matches('|')
+        .trim_end_matches('|')
         .split('|')
         .map(|v| v.trim().to_string())
         .collect::<Vec<String>>();
+
+    if cells.len() < 2 {
+        return None;
+    }
 
     Some(cells)
 }
@@ -306,6 +312,37 @@ mod tests {
         assert_eq!(doc.project_name.as_deref(), Some("demo"));
         assert_eq!(doc.requirements.len(), 1);
         assert_eq!(doc.requirements[0].id, "REQ-001");
+        assert_eq!(doc.acceptance_criteria.len(), 1);
+    }
+
+    #[test]
+    fn supports_markdown_tables_without_trailing_pipe() {
+        let src = r#"
+# PRD: test
+> 项目名称：demo
+
+## 1. 项目上下文
+- type: rust
+
+## 2. 需求列表
+### REQ-001: build
+| 字段 | 值
+|------|-----
+| **优先级** | high
+| **描述** | run build
+| **验证命令** | `echo ok`
+| **通过条件** | 退出码 = 0
+
+- [ ] do x
+
+## 3. 验收标准
+| 标准 | 验证命令 | 通过条件
+|------|----------|----------
+| 构建成功 | `echo ok` | 退出码 = 0
+"#;
+
+        let doc = parse_prd_str(src).expect("expected parser to support no trailing pipe");
+        assert_eq!(doc.requirements.len(), 1);
         assert_eq!(doc.acceptance_criteria.len(), 1);
     }
 }

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::config::ConvergenceConfig;
+use crate::plugin::prd_runner::config::ConvergenceConfig;
 
 #[derive(Debug, Clone)]
 pub struct ConvergenceGuard {
@@ -50,7 +50,7 @@ impl ConvergenceGuard {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::ConvergenceConfig;
+    use crate::plugin::prd_runner::config::ConvergenceConfig;
 
     use super::ConvergenceGuard;
 

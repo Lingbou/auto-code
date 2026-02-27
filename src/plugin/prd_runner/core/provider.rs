@@ -76,7 +76,6 @@ impl CliPrintProvider {
             .arg("json")
             .arg("--input-format")
             .arg("text")
-            .arg("--no-session-persistence")
             .arg("--permission-mode")
             .arg("bypassPermissions")
             .arg(prompt)
@@ -119,14 +118,16 @@ impl CliPrintProvider {
             return Ok(normalized);
         }
 
-        if stderr.trim().is_empty() {
-            return Ok(normalized);
-        }
+        let message = if stderr.trim().is_empty() {
+            normalized
+        } else {
+            format!("{}\n\n[provider-stderr]\n{}", normalized, stderr.trim())
+        };
 
-        Ok(format!(
-            "{}\n\n[provider-stderr]\n{}",
-            normalized,
-            stderr.trim()
+        Err(anyhow!(
+            "claude exited with code {:?}: {}",
+            output.status.code(),
+            message
         ))
     }
 
@@ -159,7 +160,7 @@ impl CliPrintProvider {
 
 impl Provider for CliPrintProvider {
     fn name(&self) -> &str {
-        "cli-print"
+        self.command.trim()
     }
 
     fn start(&mut self) -> Result<()> {
@@ -328,6 +329,30 @@ fn can_write_claude_config(config_dir: &Path) -> bool {
 }
 
 fn parse_claude_output(stdout: &str) -> Result<ClaudeParsedOutput> {
+    let all = stdout.trim();
+    if !all.is_empty() {
+        if let Ok(value) = serde_json::from_str::<Value>(all) {
+            if let Ok(parsed) = extract_claude_result(value) {
+                return Ok(parsed);
+            }
+        }
+    }
+
+    for (idx, _) in stdout.match_indices('{').rev() {
+        let candidate = stdout[idx..].trim();
+        if candidate.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(candidate) else {
+            continue;
+        };
+
+        if let Ok(parsed) = extract_claude_result(value) {
+            return Ok(parsed);
+        }
+    }
+
     for line in stdout.lines().rev() {
         let trimmed = line.trim();
         if trimmed.is_empty() || !trimmed.starts_with('{') {
@@ -440,6 +465,21 @@ mod tests {
         let parsed = parse_claude_output(raw)?;
         assert!(parsed.text.contains("not logged in"));
         assert!(parsed.is_error);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_claude_pretty_json_payload() -> Result<()> {
+        let raw = r#"provider debug
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "ok"
+}"#;
+        let parsed = parse_claude_output(raw)?;
+        assert_eq!(parsed.text, "ok");
+        assert!(!parsed.is_error);
         Ok(())
     }
 }

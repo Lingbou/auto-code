@@ -6,18 +6,22 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use tracing::info;
 
-use crate::checkpoint::saver::CheckpointManager;
-use crate::config::prd::PrdDocument;
-use crate::config::AppConfig;
-use crate::core::executor::CommandExecutor;
-use crate::core::process::AiProcess;
-use crate::core::provider::CliPrintProvider;
-use crate::logger::report::{write_report, EvidenceReport, IterationReport, ReqReport};
-use crate::logger::writer::LogWriter;
-use crate::loop_engine::convergence::ConvergenceGuard;
-use crate::loop_engine::evaluator::{evaluate_requirement, evaluate_requirement_dry_run};
-use crate::loop_engine::pass_condition::evaluate_pass_condition;
-use crate::loop_engine::state::{EngineState, ReqStatus};
+use crate::plugin::prd_runner::checkpoint::saver::CheckpointManager;
+use crate::plugin::prd_runner::config::prd::PrdDocument;
+use crate::plugin::prd_runner::config::AppConfig;
+use crate::plugin::prd_runner::core::executor::CommandExecutor;
+use crate::plugin::prd_runner::core::process::AiProcess;
+use crate::plugin::prd_runner::core::provider::CliPrintProvider;
+use crate::plugin::prd_runner::logger::report::{
+    write_report, EvidenceReport, IterationReport, ReqReport,
+};
+use crate::plugin::prd_runner::logger::writer::LogWriter;
+use crate::plugin::prd_runner::loop_engine::convergence::ConvergenceGuard;
+use crate::plugin::prd_runner::loop_engine::evaluator::{
+    evaluate_requirement, evaluate_requirement_dry_run,
+};
+use crate::plugin::prd_runner::loop_engine::pass_condition::evaluate_pass_condition;
+use crate::plugin::prd_runner::loop_engine::state::{EngineState, ReqStatus};
 use crate::runtime::signal;
 
 #[derive(Debug, Clone)]
@@ -78,6 +82,7 @@ impl EngineRuntime {
         };
 
         let mut last_checkpoint = None;
+        let mut acceptance_passed = false;
         let output_summary_limit = self.config.logging.output_summary_max_chars;
 
         loop {
@@ -85,7 +90,7 @@ impl EngineRuntime {
                 let reason = "received Ctrl+C".to_string();
                 logger.log_event("STOP", &reason)?;
                 return Ok(RunSummary {
-                    completed: state.all_done(),
+                    completed: is_run_completed(&state, acceptance_passed),
                     iterations: state.iteration,
                     stop_reason: Some(reason),
                     last_checkpoint,
@@ -95,7 +100,7 @@ impl EngineRuntime {
             if let Some(reason) = convergence.check() {
                 logger.log_event("STOP", &reason.to_string())?;
                 return Ok(RunSummary {
-                    completed: state.all_done(),
+                    completed: is_run_completed(&state, acceptance_passed),
                     iterations: state.iteration,
                     stop_reason: Some(reason.to_string()),
                     last_checkpoint,
@@ -114,7 +119,7 @@ impl EngineRuntime {
                     let reason = "received Ctrl+C".to_string();
                     logger.log_event("STOP", &reason)?;
                     return Ok(RunSummary {
-                        completed: state.all_done(),
+                        completed: is_run_completed(&state, acceptance_passed),
                         iterations: state.iteration,
                         stop_reason: Some(reason),
                         last_checkpoint,
@@ -127,7 +132,7 @@ impl EngineRuntime {
                     let reason = "reached max_runtime (0s remaining)".to_string();
                     logger.log_event("STOP", &reason)?;
                     return Ok(RunSummary {
-                        completed: state.all_done(),
+                        completed: is_run_completed(&state, acceptance_passed),
                         iterations: state.iteration,
                         stop_reason: Some(reason),
                         last_checkpoint,
@@ -202,7 +207,7 @@ impl EngineRuntime {
                                 last_checkpoint,
                             });
                         }
-                        crate::core::process::AiInstruction {
+                        crate::plugin::prd_runner::core::process::AiInstruction {
                             raw_output: format!("[provider-error] {}", err_chain),
                             commands: Vec::new(),
                         }
@@ -333,6 +338,7 @@ impl EngineRuntime {
                 state.iteration,
                 self.dry_run,
             )?;
+            acceptance_passed = failed_criteria.is_empty();
             if failed_criteria.is_empty() {
                 logger.log_event(
                     "ACCEPTANCE_STATUS",
@@ -401,7 +407,7 @@ impl EngineRuntime {
 
 fn run_acceptance_checks(
     executor: &CommandExecutor,
-    criteria: &[crate::config::prd::AcceptanceCriterion],
+    criteria: &[crate::plugin::prd_runner::config::prd::AcceptanceCriterion],
     logger: &mut LogWriter,
     iteration: u32,
     dry_run: bool,
@@ -523,6 +529,10 @@ fn build_iteration_report(
     }
 }
 
+fn is_run_completed(state: &EngineState, acceptance_passed: bool) -> bool {
+    state.all_done() && acceptance_passed
+}
+
 fn fatal_provider_stop_reason(err: &str) -> Option<String> {
     let lower = err.to_ascii_lowercase();
 
@@ -555,9 +565,12 @@ mod tests {
     use anyhow::Result;
     use tempfile::TempDir;
 
-    use crate::config::prd::{AcceptanceCriterion, PrdDocument, Requirement};
-    use crate::config::AppConfig;
-    use crate::loop_engine::driver::{fatal_provider_stop_reason, EngineRuntime};
+    use crate::plugin::prd_runner::config::prd::{AcceptanceCriterion, PrdDocument, Requirement};
+    use crate::plugin::prd_runner::config::AppConfig;
+    use crate::plugin::prd_runner::loop_engine::driver::{
+        fatal_provider_stop_reason, is_run_completed, EngineRuntime,
+    };
+    use crate::plugin::prd_runner::loop_engine::state::{EngineState, ReqRecord, ReqStatus};
 
     #[test]
     fn run_stops_when_runtime_limit_reached() -> Result<()> {
@@ -618,5 +631,25 @@ mod tests {
         let err = "failed to read output from provider | caused by: claude returned error: API Error: 429";
         let reason = fatal_provider_stop_reason(err);
         assert!(reason.is_none());
+    }
+
+    #[test]
+    fn completion_requires_acceptance_to_pass() {
+        let mut state = EngineState {
+            iteration: 1,
+            req_status: std::collections::BTreeMap::new(),
+        };
+        state.req_status.insert(
+            "REQ-001".to_string(),
+            ReqRecord {
+                status: ReqStatus::Done,
+                attempts: 1,
+                evidence: None,
+                last_error: None,
+            },
+        );
+
+        assert!(is_run_completed(&state, true));
+        assert!(!is_run_completed(&state, false));
     }
 }

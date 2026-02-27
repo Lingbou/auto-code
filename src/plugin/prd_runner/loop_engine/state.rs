@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::prd::Requirement;
+use crate::plugin::prd_runner::config::prd::Requirement;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,7 +132,7 @@ impl EngineState {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::prd::Requirement;
+    use crate::plugin::prd_runner::config::prd::Requirement;
 
     use super::{EngineState, ReqEvidence, ReqStatus};
 
